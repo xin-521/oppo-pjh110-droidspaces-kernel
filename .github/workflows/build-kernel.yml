@@ -67,18 +67,33 @@ jobs:
 
       - name: Install Android clang r416183b
         run: |
-          set -e
+          set -uo pipefail
           mkdir -p toolchain
-          if curl -fL --retry 5 --retry-delay 5 \
-            'https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz' \
-            -o /tmp/clang.tar.gz; then
+          url='https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz'
+          ok=0
+          for attempt in 1 2 3 4; do
+            echo "==> downloading clang r416183b (attempt ${attempt})"
+            rm -rf toolchain/clang /tmp/clang.tar.gz /tmp/clang.tar
+            # googlesource occasionally truncates the archive mid-transfer, and
+            # curl still exits 0, so validate the tarball before trusting it.
+            if ! curl -fL --retry 5 --retry-delay 5 --retry-all-errors "$url" -o /tmp/clang.tar.gz \
+              || ! tar -tzf /tmp/clang.tar.gz >/dev/null 2>&1; then
+              echo "::warning::clang archive was incomplete, retrying"
+              sleep 10
+              continue
+            fi
             mkdir -p toolchain/clang
             tar -xzf /tmp/clang.tar.gz -C toolchain/clang
             CLANG_BIN="$(find toolchain/clang -type f -path '*/bin/clang' | head -n1 || true)"
             if [ -n "$CLANG_BIN" ] && "$CLANG_BIN" --version; then
-              echo "$PWD/$(dirname "$CLANG_BIN")" >> "$GITHUB_PATH"
-              exit 0
+              ok=1
+              break
             fi
+            sleep 10
+          done
+          if [ "$ok" = "1" ]; then
+            echo "$PWD/$(dirname "$CLANG_BIN")" >> "$GITHUB_PATH"
+            exit 0
           fi
           echo "::warning::AOSP clang unavailable, falling back to Ubuntu clang-12"
           sudo apt-get install -y --no-install-recommends clang-12 lld-12 llvm-12
