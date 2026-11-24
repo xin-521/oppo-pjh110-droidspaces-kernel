@@ -23,6 +23,29 @@ CONFIG_LOCALVERSION_AUTO=n
 源码并不是 870 固件的逐字节对应源码；如果模块 CRC 仍然不匹配，见下面的
 “模块加载失败”。
 
+## 两棵源码树
+
+OPPO 的公开内核树把 vendor 驱动放在另一个仓库里，用符号链接接进来，例如：
+
+```text
+kernel/oplus_cpu                     -> ../../vendor/oplus/kernel/cpu
+drivers/soc/oplus/hans               -> ../../../../vendor/oplus/kernel/hans
+sound/soc/codecs/audio               -> ../../../../vendor/oplus/kernel_5.10/audio
+```
+
+一共三十多个这样的链接，全部指到 `kernel-src/` 旁边的 `vendor/`。只解压内核
+tarball 的话它们是悬空链接，`olddefconfig` 会在
+`init/Kconfig:858: can't open file "kernel/oplus_cpu/sched/Kconfig"` 处直接失败。
+
+所以 CI 会同时拉取：
+
+- `oppo-source/android_kernel_oppo_mt6896` → `kernel-src/`
+- `oppo-source/android_kernel_modules_oppo_mt6896`（分支
+  `oppo/mt6896_v_15.0.0_reno11`）→ `kernel-modules/`，并软链到 `vendor/`
+
+`scripts/fetch-sources.sh` 在构建前会遍历所有 symlink，只要有一个指不进
+`vendor/`，就打印路径并让任务失败，不会等到编译中途才报错。
+
 ## 已启用的特性
 
 `configs/droidspaces.fragment` 在原厂配置上增加：
@@ -61,11 +84,18 @@ DroidSpaces 官方文档明确说明这两个选项会改变 scheduler/cgroup �
 
 工作流结束后下载 artifact `pjh110-droidspaces-kernel-<run>`，里面有：
 
-- `Image.lz4` / `Image`
+- `Image`（未压缩，AnyKernel3 会用这个，由 magiskboot 按原厂 boot.img 的
+  压缩格式重新打包）
+- `Image.gz` / `Image.lz4`（手动重打包 `boot.img` 时用，跟原厂一致的那份
+  更保险）
 - `System.map`
 - `config`
 - `AnyKernel3-PJH110.zip`
 - `build-info.txt`
+
+只想验证配置、不想等完整编译时，手动运行工作流并勾选 `config_only`：
+它只做源码拉取、打补丁、`olddefconfig` 和配置校验，几分钟出结果，并上传
+最终 `.config`。
 
 ## 刷入前提
 

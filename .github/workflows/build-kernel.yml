@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      config_only:
+        description: "Only resolve and verify the kernel config, do not compile"
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -33,6 +38,8 @@ permissions:
 env:
   KERNEL_REPO: oppo-source/android_kernel_oppo_mt6896
   KERNEL_COMMIT: 65da65bd3ececbd209a03c1357175ba6f2efb12e
+  MODULES_REPO: oppo-source/android_kernel_modules_oppo_mt6896
+  MODULES_BRANCH: oppo/mt6896_v_15.0.0_reno11
 
 jobs:
   build:
@@ -77,54 +84,66 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang-12 lld-12 llvm-12
           echo "/usr/lib/llvm-12/bin" >> "$GITHUB_PATH"
 
-      - name: Fetch OPPO kernel source
-        run: |
-          curl -fL --retry 5 --retry-delay 5 \
-            "https://codeload.github.com/${KERNEL_REPO}/tar.gz/${KERNEL_COMMIT}" \
-            -o /tmp/kernel.tar.gz
-          mkdir -p kernel-src
-          tar -xzf /tmp/kernel.tar.gz -C kernel-src --strip-components=1
-          du -sh kernel-src
+      - name: Fetch OPPO kernel + vendor module sources
+        run: bash scripts/fetch-sources.sh
 
       - name: Select build options
         run: |
           if [ "${{ github.event.inputs.full_lto }}" = "true" ]; then
-            sed -i 's/^CONFIG_LTO_CLANG_FULL=n$/CONFIG_LTO_CLANG_FULL=y/' configs/performance.fragment
+            sed -i 's/^# CONFIG_LTO_CLANG_FULL is not set$/CONFIG_LTO_CLANG_FULL=y/' configs/performance.fragment
             sed -i 's/^CONFIG_LTO_CLANG_THIN=y$/# CONFIG_LTO_CLANG_THIN is not set/' configs/performance.fragment
           fi
           if [ "${{ github.event.inputs.keep_debug_info }}" = "true" ]; then
-            sed -i 's/^CONFIG_DEBUG_INFO=n$/CONFIG_DEBUG_INFO=y/' configs/performance.fragment
+            sed -i 's/^# CONFIG_DEBUG_INFO is not set$/CONFIG_DEBUG_INFO=y/' configs/performance.fragment
           fi
           cat configs/performance.fragment
 
+      - name: Prepare and verify kernel config
+        run: bash scripts/prepare-kernel.sh
+
       - name: Build kernel
+        if: ${{ github.event.inputs.config_only != 'true' }}
         run: |
           export JOBS="$(nproc)"
+          export PREPARED=1
           bash scripts/build-kernel.sh
 
       - name: Package AnyKernel3
+        if: ${{ github.event.inputs.config_only != 'true' }}
         run: |
           git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git /tmp/AnyKernel3
-          cp artifacts/Image.lz4 /tmp/AnyKernel3/Image.lz4
+          cp artifacts/Image /tmp/AnyKernel3/Image
           cp anykernel/anykernel.sh /tmp/AnyKernel3/anykernel.sh
           cd /tmp/AnyKernel3
           zip -r9 "$GITHUB_WORKSPACE/artifacts/AnyKernel3-PJH110.zip" . \
             -x '.git/*' -x 'README.md'
 
       - name: Show artifacts
+        if: ${{ github.event.inputs.config_only != 'true' }}
         run: |
           ls -lh artifacts
-          file artifacts/Image.lz4 artifacts/Image || true
+          file artifacts/Image artifacts/Image.gz artifacts/Image.lz4 || true
           {
             echo "## PJH110 DroidSpaces kernel"
             echo
             echo "- Source: \`${KERNEL_REPO}@${KERNEL_COMMIT}\`"
+            echo "- Vendor modules: \`${MODULES_REPO}@${MODULES_BRANCH}\`"
             echo "- Target vermagic: \`5.10.226-android12-9-o-g18972ebc96a3\`"
             echo "- \`CONFIG_CFS_BANDWIDTH\` / \`CONFIG_CGROUP_PIDS\`: disabled (GKI module ABI)"
-            echo "- Flash \`AnyKernel3-PJH110.zip\` from a custom recovery, or use \`Image.lz4\` to repack boot.img."
+            echo "- Flash \`AnyKernel3-PJH110.zip\` from a custom recovery, or repack \`boot.img\` with \`Image\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Upload config (config-only run)
+        if: ${{ github.event.inputs.config_only == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pjh110-kernel-config-${{ github.run_number }}
+          path: out/.config
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload artifacts
+        if: ${{ github.event.inputs.config_only != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: pjh110-droidspaces-kernel-${{ github.run_number }}

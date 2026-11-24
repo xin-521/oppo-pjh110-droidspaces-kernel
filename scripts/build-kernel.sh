@@ -18,84 +18,28 @@ if [ ! -f "$SRC_DIR/Makefile" ]; then
   exit 1
 fi
 
+if [ "${PREPARED:-0}" != "1" ]; then
+  bash "$ROOT_DIR/scripts/prepare-kernel.sh"
+fi
+
+echo "==> Building kernel images with ${JOBS} job slot(s)"
 cd "$SRC_DIR"
-
-echo "==> Applying DroidSpaces kABI patches"
-if ! grep -q 'ANDROID_KABI_USE(6, struct sysv_sem sysvsem)' include/linux/sched.h; then
-  git apply --verbose "$ROOT_DIR/patches/0001-sched-kabi-sysvipc.patch"
-fi
-if ! grep -q 'ANDROID_KABI_USE(1, unsigned long mq_bytes)' include/linux/sched/user.h; then
-  git apply --verbose "$ROOT_DIR/patches/0002-user-kabi-posix-mqueue.patch"
-fi
-
-# The public OPPO branch is 5.10.209, but the installed 870 firmware ships
-# 5.10.226 vendor modules. The GKI KMI is stable within 5.10, and matching the
-# release string is required so the stock modules pass the vermagic check.
-echo "==> Aligning kernel release with stock 5.10.226 vermagic"
-if grep -q '^SUBLEVEL = 209$' Makefile; then
-  sed -i 's/^SUBLEVEL = 209$/SUBLEVEL = 226/' Makefile
-fi
-grep -q '^SUBLEVEL = 226$' Makefile || {
-  echo "ERROR: unexpected kernel version in Makefile" >&2
-  exit 1
-}
-
-echo "==> Preparing config"
-mkdir -p "$OUT_DIR"
-cp "$ROOT_DIR/configs/pjh110-device.config" "$OUT_DIR/.config"
-
-make O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
-"$SRC_DIR/scripts/kconfig/merge_config.sh" -m -O "$OUT_DIR" \
-  "$OUT_DIR/.config" \
-  "$ROOT_DIR/configs/droidspaces.fragment" \
-  "$ROOT_DIR/configs/performance.fragment"
-make O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
-
-# Exact vermagic of the installed PJH110_15.0.0.870 kernel.
-"$SRC_DIR/scripts/config" --file "$OUT_DIR/.config" \
-  --set-str LOCALVERSION "-android12-9-o-g18972ebc96a3"
-"$SRC_DIR/scripts/config" --file "$OUT_DIR/.config" --disable LOCALVERSION_AUTO
-make O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
-
-check_y() {
-  grep -q "^CONFIG_$1=y$" "$OUT_DIR/.config" || {
-    echo "ERROR: required option CONFIG_$1 is not enabled" >&2
-    exit 1
-  }
-}
-
-check_not_set() {
-  if grep -q "^CONFIG_$1=y$" "$OUT_DIR/.config"; then
-    echo "ERROR: CONFIG_$1 must stay disabled on this GKI build" >&2
-    exit 1
-  fi
-}
-
-echo "==> Verifying DroidSpaces requirements"
-for opt in \
-  SYSVIPC POSIX_MQUEUE IPC_NS PID_NS UTS_NS USER_NS \
-  SECCOMP SECCOMP_FILTER DEVTMPFS CGROUP_DEVICE \
-  NET_NS VETH BRIDGE BRIDGE_NETFILTER NF_TABLES \
-  MACVLAN IP6_NF_NAT IP6_NF_TARGET_MASQUERADE \
-  NETFILTER_XT_MATCH_ADDRTYPE IP_SET NETFILTER_XT_SET \
-  TMPFS_XATTR TMPFS_POSIX_ACL \
-  MODULES MODVERSIONS PREEMPT KASAN UBSAN
-do
-  check_y "$opt"
-done
-
-check_not_set CFS_BANDWIDTH
-check_not_set CGROUP_PIDS
-
-echo "==> Building Image.lz4 with $(nproc) job slot(s)"
 export KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-github}"
 export KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-actions}"
-make O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$JOBS" Image.lz4
+
+make O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$JOBS" Image
+make O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$JOBS" Image.gz
+if ! make O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$JOBS" Image.lz4; then
+  echo "WARNING: Image.lz4 target failed, continuing without it" >&2
+fi
 
 echo "==> Collecting artifacts"
 mkdir -p "$ARTIFACT_DIR"
-cp "$OUT_DIR/arch/arm64/boot/Image.lz4" "$ARTIFACT_DIR/"
 cp "$OUT_DIR/arch/arm64/boot/Image" "$ARTIFACT_DIR/"
+cp "$OUT_DIR/arch/arm64/boot/Image.gz" "$ARTIFACT_DIR/"
+if [ -f "$OUT_DIR/arch/arm64/boot/Image.lz4" ]; then
+  cp "$OUT_DIR/arch/arm64/boot/Image.lz4" "$ARTIFACT_DIR/"
+fi
 cp "$OUT_DIR/System.map" "$ARTIFACT_DIR/"
 cp "$OUT_DIR/.config" "$ARTIFACT_DIR/config"
 if [ -f "$OUT_DIR/Module.symvers" ]; then
@@ -116,3 +60,4 @@ CGROUP_PIDS=disabled
 EOF
 
 echo "==> Done"
+ls -lh "$ARTIFACT_DIR"

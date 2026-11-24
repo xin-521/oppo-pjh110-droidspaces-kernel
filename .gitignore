@@ -1,11 +1,20 @@
 # build workspaces / downloaded sources
 /kernel-src/
+/kernel-modules/
+/vendor
 /out/
 /artifacts/
 /toolchain/
 /patchtest/
 
 # local scratch files
+/device.dtb
+/dsdoc.html
+/merge_config.sh
+/run1.log
+/tree_full.json
+/参数.md
+/资源.md
 config.extracted
 config.gz
 gki_defconfig.remote
