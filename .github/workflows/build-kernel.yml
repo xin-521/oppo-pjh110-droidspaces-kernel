@@ -1,0 +1,133 @@
+name: Build PJH110 kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      full_lto:
+        description: "Use the stock full-LTO build instead of thin LTO"
+        required: false
+        type: boolean
+        default: false
+      keep_debug_info:
+        description: "Keep CONFIG_DEBUG_INFO (much larger build)"
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-kernel.yml"
+      - "configs/**"
+      - "patches/**"
+      - "scripts/**"
+      - "anykernel/**"
+
+concurrency:
+  group: pjh110-kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  KERNEL_REPO: oppo-source/android_kernel_oppo_mt6896
+  KERNEL_COMMIT: 65da65bd3ececbd209a03c1357175ba6f2efb12e
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout CI files
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo apt-get clean
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            lz4 xz-utils zstd cpio rsync zip unzip patch kmod \
+            python3 python-is-python3
+
+      - name: Install Android clang r416183b
+        run: |
+          set -e
+          mkdir -p toolchain
+          if curl -fL --retry 5 --retry-delay 5 \
+            'https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz' \
+            -o /tmp/clang.tar.gz; then
+            mkdir -p toolchain/clang
+            tar -xzf /tmp/clang.tar.gz -C toolchain/clang
+            CLANG_BIN="$(find toolchain/clang -type f -path '*/bin/clang' | head -n1 || true)"
+            if [ -n "$CLANG_BIN" ] && "$CLANG_BIN" --version; then
+              echo "$PWD/$(dirname "$CLANG_BIN")" >> "$GITHUB_PATH"
+              exit 0
+            fi
+          fi
+          echo "::warning::AOSP clang unavailable, falling back to Ubuntu clang-12"
+          sudo apt-get install -y --no-install-recommends clang-12 lld-12 llvm-12
+          echo "/usr/lib/llvm-12/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch OPPO kernel source
+        run: |
+          curl -fL --retry 5 --retry-delay 5 \
+            "https://codeload.github.com/${KERNEL_REPO}/tar.gz/${KERNEL_COMMIT}" \
+            -o /tmp/kernel.tar.gz
+          mkdir -p kernel-src
+          tar -xzf /tmp/kernel.tar.gz -C kernel-src --strip-components=1
+          du -sh kernel-src
+
+      - name: Select build options
+        run: |
+          if [ "${{ github.event.inputs.full_lto }}" = "true" ]; then
+            sed -i 's/^CONFIG_LTO_CLANG_FULL=n$/CONFIG_LTO_CLANG_FULL=y/' configs/performance.fragment
+            sed -i 's/^CONFIG_LTO_CLANG_THIN=y$/# CONFIG_LTO_CLANG_THIN is not set/' configs/performance.fragment
+          fi
+          if [ "${{ github.event.inputs.keep_debug_info }}" = "true" ]; then
+            sed -i 's/^CONFIG_DEBUG_INFO=n$/CONFIG_DEBUG_INFO=y/' configs/performance.fragment
+          fi
+          cat configs/performance.fragment
+
+      - name: Build kernel
+        run: |
+          export JOBS="$(nproc)"
+          bash scripts/build-kernel.sh
+
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git /tmp/AnyKernel3
+          cp artifacts/Image.lz4 /tmp/AnyKernel3/Image.lz4
+          cp anykernel/anykernel.sh /tmp/AnyKernel3/anykernel.sh
+          cd /tmp/AnyKernel3
+          zip -r9 "$GITHUB_WORKSPACE/artifacts/AnyKernel3-PJH110.zip" . \
+            -x '.git/*' -x 'README.md'
+
+      - name: Show artifacts
+        run: |
+          ls -lh artifacts
+          file artifacts/Image.lz4 artifacts/Image || true
+          {
+            echo "## PJH110 DroidSpaces kernel"
+            echo
+            echo "- Source: \`${KERNEL_REPO}@${KERNEL_COMMIT}\`"
+            echo "- Target vermagic: \`5.10.226-android12-9-o-g18972ebc96a3\`"
+            echo "- \`CONFIG_CFS_BANDWIDTH\` / \`CONFIG_CGROUP_PIDS\`: disabled (GKI module ABI)"
+            echo "- Flash \`AnyKernel3-PJH110.zip\` from a custom recovery, or use \`Image.lz4\` to repack boot.img."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pjh110-droidspaces-kernel-${{ github.run_number }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,29 @@
+# build workspaces / downloaded sources
+/kernel-src/
+/out/
+/artifacts/
+/toolchain/
+/patchtest/
+
+# local scratch files
+config.extracted
+config.gz
+gki_defconfig.remote
+gki_reno11_defconfig
+sched.h
+user.h
+scmversion
+setlocalversion
+ak3-core.sh
+tree.json
+ds_tree.json
+Kconfig.*
+K-*
+tmp_*
+*.rej
+*.orig
+*.bak
+
+# Windows
+Thumbs.db
+desktop.ini

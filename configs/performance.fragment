@@ -1,0 +1,7 @@
+# Keep the stock module ABI, but drop the parts that only make the build
+# slower/larger. KASAN, UBSAN, CFI and KCSAN are intentionally left enabled:
+# the stock vendor modules are built with those instrumentations and need the
+# corresponding kernel helpers to be present.
+CONFIG_DEBUG_INFO=n
+CONFIG_LTO_CLANG_FULL=n
+CONFIG_LTO_CLANG_THIN=y
