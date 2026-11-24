@@ -112,7 +112,9 @@ jobs:
         if: ${{ github.event.inputs.config_only != 'true' }}
         run: |
           git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git /tmp/AnyKernel3
-          cp artifacts/Image /tmp/AnyKernel3/Image
+          # The stock boot.img carries a gzip kernel (KBUILD_IMAGE=Image.gz),
+          # so ship the same format instead of a raw Image.
+          cp artifacts/Image.gz /tmp/AnyKernel3/Image.gz
           cp anykernel/anykernel.sh /tmp/AnyKernel3/anykernel.sh
           cd /tmp/AnyKernel3
           zip -r9 "$GITHUB_WORKSPACE/artifacts/AnyKernel3-PJH110.zip" . \

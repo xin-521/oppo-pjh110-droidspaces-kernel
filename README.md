@@ -84,10 +84,9 @@ DroidSpaces 官方文档明确说明这两个选项会改变 scheduler/cgroup �
 
 工作流结束后下载 artifact `pjh110-droidspaces-kernel-<run>`，里面有：
 
-- `Image`（未压缩，AnyKernel3 会用这个，由 magiskboot 按原厂 boot.img 的
-  压缩格式重新打包）
-- `Image.gz` / `Image.lz4`（手动重打包 `boot.img` 时用，跟原厂一致的那份
-  更保险）
+- `Image.gz`（AnyKernel3 包里用的就是它；实测原厂 `boot.img` 的内核是 gzip，
+  `arch/arm64/Makefile` 的 `KBUILD_IMAGE` 也是 `Image.gz`）
+- `Image` / `Image.lz4`（手动重打包 `boot.img` 时的备选）
 - `System.map`
 - `config`
 - `AnyKernel3-PJH110.zip`

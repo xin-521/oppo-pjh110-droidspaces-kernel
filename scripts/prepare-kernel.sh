@@ -24,6 +24,28 @@ fi
 
 cd "$SRC_DIR"
 
+# kernel-src/ sits inside this git repository on the runner, so the tree's
+# scripts/setlocalversion finds a git repo, sees HEAD is not a tagged commit
+# and appends "+" to the release. The stock vermagic has no "+", and one
+# stray character there makes every vendor module refuse to load.
+echo "==> Disabling the setlocalversion '+' suffix"
+python3 - scripts/setlocalversion <<'PY'
+import sys
+
+path = sys.argv[1]
+src = open(path).read()
+needle = 'res="$res${scm:++}"'
+if needle in src:
+    open(path, "w").write(src.replace(needle, 'res="$res"'))
+    print("    patched " + path)
+else:
+    print("    already clean")
+PY
+if grep -qF '${scm:++}' scripts/setlocalversion; then
+  echo "ERROR: scripts/setlocalversion still appends '+' to the release" >&2
+  exit 1
+fi
+
 echo "==> Applying DroidSpaces GKI kABI patches"
 # The patches must land, otherwise CONFIG_SYSVIPC/CONFIG_POSIX_MQUEUE shift
 # task_struct and user_struct and the stock vendor modules stop loading.
@@ -113,9 +135,7 @@ for opt in CFS_BANDWIDTH CGROUP_PIDS LOCALVERSION_AUTO; do
   fi
 done
 
-kver="$(awk '/^VERSION =/{v=$3} /^PATCHLEVEL =/{p=$3} /^SUBLEVEL =/{s=$3} /^EXTRAVERSION =/{e=$3} END{print v"."p"."s e}' Makefile)"
-localver="$(sed -n 's/^CONFIG_LOCALVERSION="\(.*\)"$/\1/p' "$OUT_DIR/.config")"
-release="${kver}${localver}"
+release="$(make -s O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease 2>/dev/null | tail -n 1)"
 echo "    kernel release: ${release}"
 if [ "$release" != "$EXPECTED_RELEASE" ]; then
   missing="${missing} release(${release}!=${EXPECTED_RELEASE})"
