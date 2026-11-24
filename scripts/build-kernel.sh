@@ -33,6 +33,17 @@ if ! make O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$JOBS" Image.lz4; then
   echo "WARNING: Image.lz4 target failed, continuing without it" >&2
 fi
 
+# The vendor modules compare this exact string against their vermagic, so a
+# stray suffix (setlocalversion appends "+" when the source dir is a git
+# worktree) has to fail the build rather than the phone.
+EXPECTED_RELEASE="${EXPECTED_RELEASE:-5.10.226-android12-9-o-g18972ebc96a3}"
+if ! grep -aqF "Linux version ${EXPECTED_RELEASE} " "$OUT_DIR/arch/arm64/boot/Image"; then
+  echo "ERROR: kernel banner does not carry vermagic ${EXPECTED_RELEASE}" >&2
+  grep -ao 'Linux version 5\.10[^ ]*' "$OUT_DIR/arch/arm64/boot/Image" | head -n 1 >&2 || true
+  exit 1
+fi
+echo "    vermagic confirmed: ${EXPECTED_RELEASE}"
+
 echo "==> Collecting artifacts"
 mkdir -p "$ARTIFACT_DIR"
 cp "$OUT_DIR/arch/arm64/boot/Image" "$ARTIFACT_DIR/"

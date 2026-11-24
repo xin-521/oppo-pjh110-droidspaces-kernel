@@ -135,7 +135,9 @@ for opt in CFS_BANDWIDTH CGROUP_PIDS LOCALVERSION_AUTO; do
   fi
 done
 
-release="$(make -s O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease 2>/dev/null | tail -n 1)"
+kver="$(awk '/^VERSION =/{v=$3} /^PATCHLEVEL =/{p=$3} /^SUBLEVEL =/{s=$3} /^EXTRAVERSION =/{e=$3} END{print v"."p"."s e}' Makefile)"
+localver="$(sed -n 's/^CONFIG_LOCALVERSION="\(.*\)"$/\1/p' "$OUT_DIR/.config")"
+release="${kver}${localver}"
 echo "    kernel release: ${release}"
 if [ "$release" != "$EXPECTED_RELEASE" ]; then
   missing="${missing} release(${release}!=${EXPECTED_RELEASE})"
